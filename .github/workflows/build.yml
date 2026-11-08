@@ -1,0 +1,69 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false      # one platform failing doesn't cancel the others
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            extra: ""
+          - name: macOS
+            os: macos-latest
+            extra: '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13'
+          - name: Linux
+            os: ubuntu-22.04
+            extra: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfreetype-dev libx11-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev \
+            libgl1-mesa-dev
+
+      # Re-downloading JUCE every run is slow; cache it.
+      - name: Cache JUCE download
+        uses: actions/cache@v4
+        with:
+          path: build/_deps/juce-src
+          key: juce-8.0.6-${{ runner.os }}
+
+      - name: Configure
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DJ60_COPY_AFTER_BUILD=OFF
+          ${{ matrix.extra }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run DSP test
+        if: runner.os != 'Windows'
+        run: |
+          g++ -std=c++17 -O2 test_dsp.cpp -o test_dsp
+          ./test_dsp
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: J60Chorus-${{ matrix.name }}
+          path: |
+            build/J60Chorus_artefacts/Release/VST3
+            build/J60Chorus_artefacts/Release/Standalone
+            build/J60Chorus_artefacts/Release/AU
+          if-no-files-found: error
